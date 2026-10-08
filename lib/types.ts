@@ -1,7 +1,19 @@
 export type UserRole = 'super_admin' | 'store_keeper' | 'branch_user' | 'viewer';
 export type Condition = 'new' | 'used';
 export type BranchStatus = 'active' | 'inactive';
-export type Unit = 'Piece' | 'KG' | 'Gram' | 'Liter' | 'Packet' | 'Box' | 'Pair' | 'Roll' | 'Meter' | 'Set' | 'Dozen';
+export type Unit =
+  | 'Piece'
+  | 'KG'
+  | 'Gram'
+  | 'Liter'
+  | 'Packet'
+  | 'Box'
+  | 'Pair'
+  | 'Roll'
+  | 'Meter'
+  | 'Set'
+  | 'Dozen';
+
 export type IssueStatus = 'issued' | 'partial_return' | 'returned';
 
 export interface Profile {
@@ -106,7 +118,14 @@ export interface StoreStock {
   stores?: Store;
 }
 
-export type StockTransactionType = 'stock_in' | 'stock_out' | 'branch_transfer' | 'store_issue' | 'return' | 'purchase' | 'adjustment';
+export type StockTransactionType =
+  | 'stock_in'
+  | 'stock_out'
+  | 'branch_transfer'
+  | 'store_issue'
+  | 'return'
+  | 'purchase'
+  | 'adjustment';
 
 export interface StockTransaction {
   id: string;
@@ -240,30 +259,91 @@ export interface LedgerEntry {
   qty_out: number;
   balance_new: number;
   balance_used: number;
+  branch: string; // FIXED
 }
 
 export type Database = {
   public: {
     Tables: {
-      profiles: { Row: Profile; Insert: Partial<Profile>; Update: Partial<Profile> };
-      branches: { Row: Branch; Insert: Partial<Branch>; Update: Partial<Branch> };
-      stores: { Row: Store; Insert: Partial<Store>; Update: Partial<Store> };
-      categories: { Row: Category; Insert: Partial<Category>; Update: Partial<Category> };
-      products: { Row: Product; Insert: Partial<Product>; Update: Partial<Product> };
-      purchases: { Row: Purchase; Insert: Partial<Purchase>; Update: Partial<Purchase> };
-      donations: { Row: Donation; Insert: Partial<Donation>; Update: Partial<Donation> };
-      issue_slips: { Row: IssueSlip; Insert: Partial<IssueSlip>; Update: Partial<IssueSlip> };
-      issue_items: { Row: IssueItem; Insert: Partial<IssueItem>; Update: Partial<IssueItem> };
-      returns: { Row: Return; Insert: Partial<Return>; Update: Partial<Return> };
-      audit_logs: { Row: AuditLog; Insert: Partial<AuditLog>; Update: Partial<AuditLog> };
-      product_variants: { Row: ProductVariant; Insert: Partial<ProductVariant>; Update: Partial<ProductVariant> };
-      branch_stock: { Row: BranchStock; Insert: Partial<BranchStock>; Update: Partial<BranchStock> };
-      store_stock: { Row: StoreStock; Insert: Partial<StoreStock>; Update: Partial<StoreStock> };
-      stock_transactions: { Row: StockTransaction; Insert: Partial<StockTransaction>; Update: Partial<StockTransaction> };
+      profiles: {
+        Row: Profile;
+        Insert: Partial<Profile>;
+        Update: Partial<Profile>;
+      };
+      branches: {
+        Row: Branch;
+        Insert: Partial<Branch>;
+        Update: Partial<Branch>;
+      };
+      stores: {
+        Row: Store;
+        Insert: Partial<Store>;
+        Update: Partial<Store>;
+      };
+      categories: {
+        Row: Category;
+        Insert: Partial<Category>;
+        Update: Partial<Category>;
+      };
+      products: {
+        Row: Product;
+        Insert: Partial<Product>;
+        Update: Partial<Product>;
+      };
+      purchases: {
+        Row: Purchase;
+        Insert: Partial<Purchase>;
+        Update: Partial<Purchase>;
+      };
+      donations: {
+        Row: Donation;
+        Insert: Partial<Donation>;
+        Update: Partial<Donation>;
+      };
+      issue_slips: {
+        Row: IssueSlip;
+        Insert: Partial<IssueSlip>;
+        Update: Partial<IssueSlip>;
+      };
+      issue_items: {
+        Row: IssueItem;
+        Insert: Partial<IssueItem>;
+        Update: Partial<IssueItem>;
+      };
+      returns: {
+        Row: Return;
+        Insert: Partial<Return>;
+        Update: Partial<Return>;
+      };
+      audit_logs: {
+        Row: AuditLog;
+        Insert: Partial<AuditLog>;
+        Update: Partial<AuditLog>;
+      };
+      product_variants: {
+        Row: ProductVariant;
+        Insert: Partial<ProductVariant>;
+        Update: Partial<ProductVariant>;
+      };
+      branch_stock: {
+        Row: BranchStock;
+        Insert: Partial<BranchStock>;
+        Update: Partial<BranchStock>;
+      };
+      store_stock: {
+        Row: StoreStock;
+        Insert: Partial<StoreStock>;
+        Update: Partial<StoreStock>;
+      };
+      stock_transactions: {
+        Row: StockTransaction;
+        Insert: Partial<StockTransaction>;
+        Update: Partial<StockTransaction>;
+      };
     };
+
     Views: Record<string, never>;
     Functions: Record<string, never>;
     Enums: Record<string, never>;
   };
-  
 };

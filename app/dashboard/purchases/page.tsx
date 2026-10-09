@@ -15,7 +15,7 @@ import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, 
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { Plus, Trash2, ShoppingCart, Search, Download, Eye, Printer, TrendingUp, Package } from 'lucide-react';
+import { Plus, Trash2, ShoppingCart, Search, Download, Eye, Printer, TrendingUp, Package, Pencil } from 'lucide-react';
 import { toast } from 'sonner';
 import { exportToCSV, printTable } from '@/lib/export';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
@@ -56,6 +56,8 @@ export default function PurchasesPage() {
   const [productFilter, setProductFilter] = useState('all');
   const [stores, setStores] = useState<{ id: string; name: string }[]>([]);
   const [dialogOpen, setDialogOpen] = useState(false);
+  // Set when editing an existing purchase row (null when recording a new one).
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);
   const [viewing, setViewing] = useState<Purchase | null>(null);
   const [slipForm, setSlipForm] = useState(emptySlipForm);
@@ -226,34 +228,79 @@ export default function PurchasesPage() {
     setSaving(true);
     const { data: { user } } = await supabase.auth.getUser();
 
-    // purchase_no is generated automatically by the database (sequence default)
-    const rows = validItems.map(i => ({
-      purchase_date: slipForm.purchase_date,
-      supplier: slipForm.supplier,
-      invoice_number: slipForm.invoice_number,
-      product_id: i.product_id,
-      store_id: products.find(p => p.id === i.product_id)?.store_id, // FIX 2
-      variant_id: i.variant_id || null,
-      branch_id: slipForm.branch_id,                                  // FIX 1
-      category_id: i.category_id || null,
-      quantity: Number(i.quantity),
-      unit_price: Number(i.unit_price),
-      total_cost: Number(i.quantity) * Number(i.unit_price),          // FIX 3
-      notes: slipForm.notes,
-      created_by: user?.id,
-    }));
+    if (editingId) {
+      // Editing an existing purchase row — one row, one item.
+      const i = validItems[0];
+      const updateRow = {
+        purchase_date: slipForm.purchase_date,
+        supplier: slipForm.supplier,
+        invoice_number: slipForm.invoice_number,
+        product_id: i.product_id,
+        store_id: products.find(p => p.id === i.product_id)?.store_id, // FIX 2
+        variant_id: i.variant_id || null,
+        branch_id: slipForm.branch_id,                                  // FIX 1
+        category_id: i.category_id || null,
+        quantity: Number(i.quantity),
+        unit_price: Number(i.unit_price),
+        total_cost: Number(i.quantity) * Number(i.unit_price),          // FIX 3
+        notes: slipForm.notes,
+      };
+      const { error } = await supabase.from('purchases').update(updateRow).eq('id', editingId);
+      if (error) { toast.error(error.message); setSaving(false); return; }
+      toast.success('Purchase updated');
+      logAudit('UPDATE', 'purchases', editingId, { invoice: slipForm.invoice_number });
+    } else {
+      // purchase_no is generated automatically by the database (sequence default)
+      const rows = validItems.map(i => ({
+        purchase_date: slipForm.purchase_date,
+        supplier: slipForm.supplier,
+        invoice_number: slipForm.invoice_number,
+        product_id: i.product_id,
+        store_id: products.find(p => p.id === i.product_id)?.store_id, // FIX 2
+        variant_id: i.variant_id || null,
+        branch_id: slipForm.branch_id,                                  // FIX 1
+        category_id: i.category_id || null,
+        quantity: Number(i.quantity),
+        unit_price: Number(i.unit_price),
+        total_cost: Number(i.quantity) * Number(i.unit_price),          // FIX 3
+        notes: slipForm.notes,
+        created_by: user?.id,
+      }));
 
-    const { error } = await supabase.from('purchases').insert(rows);
-    if (error) { toast.error(error.message); setSaving(false); return; }
+      const { error } = await supabase.from('purchases').insert(rows);
+      if (error) { toast.error(error.message); setSaving(false); return; }
 
-    toast.success(`${validItems.length} purchase item${validItems.length > 1 ? 's' : ''} recorded`);
-    logAudit('INSERT', 'purchases', undefined, { items: validItems.length, invoice: slipForm.invoice_number });
+      toast.success(`${validItems.length} purchase item${validItems.length > 1 ? 's' : ''} recorded`);
+      logAudit('INSERT', 'purchases', undefined, { items: validItems.length, invoice: slipForm.invoice_number });
+    }
+
     setSaving(false);
     setDialogOpen(false);
+    setEditingId(null);
     setSlipForm(emptySlipForm);
     setItems([{ ...emptyItem }]);
     setProductSearch({});
     fetchData();
+  };
+
+  const openEdit = (p: Purchase) => {
+    setEditingId(p.id);
+    setSlipForm({
+      purchase_date: p.purchase_date,
+      supplier: p.supplier || '',
+      invoice_number: p.invoice_number || '',
+      branch_id: p.branch_id || '',
+      notes: p.notes || '',
+    });
+    setItems([{
+      product_id: p.product_id,
+      variant_id: p.variant_id || '',
+      category_id: p.category_id || '',
+      quantity: p.quantity,
+      unit_price: p.unit_price,
+    }]);
+    setProductSearch({});
+    setDialogOpen(true);
   };
 
   const handleDelete = async () => {
@@ -307,7 +354,9 @@ export default function PurchasesPage() {
     <div>
       <div className="flex items-center justify-between mb-3">
         <h4 className="font-medium text-sm">Purchase Items</h4>
-        <Button size="sm" variant="outline" onClick={addItem}><Plus className="w-3.5 h-3.5 mr-1" /> Add Item</Button>
+        {!editingId && (
+          <Button size="sm" variant="outline" onClick={addItem}><Plus className="w-3.5 h-3.5 mr-1" /> Add Item</Button>
+        )}
       </div>
       <div className="space-y-3">
         {items.map((item, idx) => {
@@ -364,7 +413,7 @@ export default function PurchasesPage() {
                   </Select>
                 </div>
                 <div className="col-span-12 sm:col-span-2 flex justify-end">
-                  {items.length > 1 && (
+                  {items.length > 1 && !editingId && (
                     <Button size="sm" variant="ghost" className="h-8 w-8 p-0 text-destructive" onClick={() => removeItem(idx)}>
                       <Trash2 className="w-3.5 h-3.5" />
                     </Button>
@@ -425,7 +474,7 @@ export default function PurchasesPage() {
         </div>
         <div className="flex gap-2">
           <Button variant="outline" onClick={handleExport}><Download className="w-4 h-4 mr-2" />Export</Button>
-          <Button onClick={() => { setSlipForm(emptySlipForm); setItems([{ ...emptyItem }]); setProductSearch({}); setDialogOpen(true); }}>
+          <Button onClick={() => { setEditingId(null); setSlipForm(emptySlipForm); setItems([{ ...emptyItem }]); setProductSearch({}); setDialogOpen(true); }}>
             <Plus className="w-4 h-4 mr-2" /> New Purchase
           </Button>
         </div>
@@ -577,6 +626,7 @@ export default function PurchasesPage() {
                   <TableCell className="text-right">
                     <div className="flex items-center justify-end gap-1">
                       <Button size="sm" variant="ghost" onClick={() => setViewing(p)} title="View"><Eye className="w-3.5 h-3.5" /></Button>
+                      <Button size="sm" variant="ghost" onClick={() => openEdit(p)} title="Edit"><Pencil className="w-3.5 h-3.5" /></Button>
                       <Button size="sm" variant="ghost" onClick={() => handlePrint(p)} title="Print"><Printer className="w-3.5 h-3.5" /></Button>
                       <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setDeleteId(p.id)} title="Delete"><Trash2 className="w-3.5 h-3.5" /></Button>
                     </div>
@@ -590,9 +640,9 @@ export default function PurchasesPage() {
       </Card>
 
       {/* Add Purchase Dialog — Category moved into each item row (see renderItemsForm) */}
-      <Dialog open={dialogOpen} onOpenChange={setDialogOpen}>
+      <Dialog open={dialogOpen} onOpenChange={(open) => { setDialogOpen(open); if (!open) setEditingId(null); }}>
         <DialogContent className="max-w-3xl max-h-[90vh] flex flex-col p-0 gap-0">
-          <DialogHeader className="px-6 pt-6 pb-2 shrink-0"><DialogTitle>Record New Purchase</DialogTitle></DialogHeader>
+          <DialogHeader className="px-6 pt-6 pb-2 shrink-0"><DialogTitle>{editingId ? 'Edit Purchase' : 'Record New Purchase'}</DialogTitle></DialogHeader>
           <div className="flex-1 min-h-0 overflow-y-auto px-6 py-2">
             <div className="grid grid-cols-2 gap-4 mb-5">
               <div>
@@ -631,8 +681,8 @@ export default function PurchasesPage() {
             </div>
           </div>
           <DialogFooter className="px-6 py-4 border-t shrink-0">
-            <Button variant="outline" onClick={() => setDialogOpen(false)}>Cancel</Button>
-            <Button onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : 'Record Purchase'}</Button>
+            <Button variant="outline" onClick={() => { setDialogOpen(false); setEditingId(null); }}>Cancel</Button>
+            <Button onClick={handleSave} disabled={saving}>{saving ? 'Saving...' : editingId ? 'Update Purchase' : 'Record Purchase'}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

@@ -250,20 +250,26 @@ export default function ReportsPage() {
       hdrs = ['Item', 'Unit', ...sortedDates];
       data = Object.values(itemMap);
     } else if (reportType === 'purchases') {
-      let q = supabase.from('purchases').select('purchase_date, products(name, stores(name)), supplier, invoice_number, quantity, unit_price, total_cost')
+      // Branch + Item filters added: lets you pull e.g. "how much Sugar was
+      // purchased for Cadet College branch" by combining both filters.
+      let q = supabase.from('purchases').select('product_id, purchase_date, products(name, stores(name)), branches(name), supplier, invoice_number, quantity, unit_price, total_cost')
         .gte('purchase_date', dateFrom).lte('purchase_date', dateTo);
+      if (branchFilter && branchFilter !== 'all') q = q.eq('branch_id', branchFilter);
       const { data: rows } = await q.order('purchase_date');
-      hdrs = ['Date', 'Product', 'Store', 'Supplier', 'Invoice', 'Quantity', 'Unit Price', 'Total'];
-      data = ((rows || []) as AnyRow[]).map((r: AnyRow) => ({
-        'Date': r.purchase_date,
-        'Product': r.products?.name || '-',
-        'Store': r.products?.stores?.name || '-',
-        'Supplier': r.supplier || '-',
-        'Invoice': r.invoice_number || '-',
-        'Quantity': r.quantity,
-        'Unit Price': r.unit_price,
-        'Total': r.total_cost,
-      }));
+      hdrs = ['Date', 'Branch', 'Product', 'Store', 'Supplier', 'Invoice', 'Quantity', 'Unit Price', 'Total'];
+      data = ((rows || []) as AnyRow[])
+        .filter((r: AnyRow) => selectedItemIds.length === 0 || selectedItemIds.includes(r.product_id))
+        .map((r: AnyRow) => ({
+          'Date': r.purchase_date,
+          'Branch': r.branches?.name || '-',
+          'Product': r.products?.name || '-',
+          'Store': r.products?.stores?.name || '-',
+          'Supplier': r.supplier || '-',
+          'Invoice': r.invoice_number || '-',
+          'Quantity': r.quantity,
+          'Unit Price': r.unit_price,
+          'Total': r.total_cost,
+        }));
     } else if (reportType === 'donations') {
       let q = supabase.from('donations').select('donation_date, donor_name, products(name, stores(name)), quantity, remarks')
         .gte('donation_date', dateFrom).lte('donation_date', dateTo);
@@ -380,9 +386,9 @@ export default function ReportsPage() {
       </div>
 
       {/* Report type cards — branch users only see branch-scoped reports.
-          Purchases/Donations aren't filtered by branch anywhere in this app
-          and aren't part of a branch_user's permissions, so they're hidden
-          here rather than silently showing every branch's data. */}
+          Donations aren't filtered by branch anywhere in this app and isn't
+          part of a branch_user's permissions, so it's hidden here rather
+          than silently showing every branch's data. */}
       <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3">
         {(userRole === 'branch_user'
           ? REPORT_TYPES.filter(r => !['purchases', 'donations', 'current_stock', 'low_stock', 'dead_stock', 'daily_issues'].includes(r.value))
@@ -422,7 +428,11 @@ export default function ReportsPage() {
                 </div>
               </>
             )}
-            {!['purchases', 'donations', 'dead_stock'].includes(reportType) && (
+            {/* Branch filter now also shown for Purchase Report, so a
+                branch-wise purchase breakdown (e.g. Cadet College only)
+                can be pulled. Still hidden for Donations/Dead Stock, which
+                aren't branch-scoped in this app. */}
+            {!['donations', 'dead_stock'].includes(reportType) && (
               <div>
                 <Label>Branch</Label>
                 <Select value={branchFilter} onValueChange={setBranchFilter} disabled={!!userBranchId}>
@@ -448,7 +458,10 @@ export default function ReportsPage() {
             )}
           </div>
 
-          {(reportType === 'item_date_pivot' || reportType === 'branch_issues') && (
+          {/* Item filter — now also available for Purchase Report, so e.g.
+              "Sugar purchased for Cadet College" can be pulled by combining
+              this with the Branch filter above. */}
+          {(reportType === 'item_date_pivot' || reportType === 'branch_issues' || reportType === 'purchases') && (
             <div className="mt-4">
               <Label>Filter Items (optional )</Label>
               <div className="flex gap-2 mt-1">

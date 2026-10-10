@@ -33,7 +33,9 @@ const emptyVariant = { variant_name: '', variant_value: '', barcode: '', sku: ''
 // Purchase-only row shape for the "Received History (Purchases)" table.
 // Restocks no longer feed this table — they only affect the "Total Received"
 // summary card at the top of the View sheet (see totalIn below).
-type PurchaseRow = { id: string; date: string; supplier: string; branch: string; variant: string; quantity: number };
+// branchId is kept alongside the display name so the Branch filter dropdown
+// can match rows by id even though the name is what's shown on screen.
+type PurchaseRow = { id: string; date: string; supplier: string; branch: string; branchId: string | null; variant: string; quantity: number; unitPrice: number; totalCost: number };
 
 type Branch = { id: string; name: string };
 
@@ -79,8 +81,12 @@ export default function ProductsPage() {
   // View sheet. Fetched fresh each time a product is opened.
   const [purchaseHistory, setPurchaseHistory] = useState<Array<{
     id: string; purchase_date: string; supplier: string | null; quantity: number;
+    branch_id: string | null; unit_price: number | null; total_cost: number | null;
     branches: { name: string } | null; product_variants: { variant_name: string; variant_value: string } | null;
   }>>([]);
+  // Branch filter for the Purchase History table inside the View sheet.
+  // Reset back to "all" every time a different product is opened.
+  const [purchaseBranchFilter, setPurchaseBranchFilter] = useState('all');
   const [issueHistory, setIssueHistory] = useState<Array<{
     id: string; quantity: number; condition: string | null; received_by: string | null;
     product_variants: { variant_name: string; variant_value: string } | null;
@@ -130,10 +136,11 @@ export default function ProductsPage() {
     setPurchaseHistory([]);
     setIssueHistory([]);
     setRestockReceipts([]);
+    setPurchaseBranchFilter('all');
     setHistoryLoading(true);
     const [{ data: purch }, { data: issued }, { data: restocks }] = await Promise.all([
       supabase.from('purchases')
-        .select('id, purchase_date, supplier, quantity, branches(name), product_variants(variant_name, variant_value)')
+        .select('id, purchase_date, supplier, quantity, branch_id, unit_price, total_cost, branches(name), product_variants(variant_name, variant_value)')
         .eq('product_id', p.id)
         .order('purchase_date', { ascending: false }),
       supabase.from('issue_items')
@@ -472,15 +479,31 @@ export default function ProductsPage() {
         date: ph.purchase_date,
         supplier: ph.supplier || '-',
         branch: (ph.branches as { name: string } | null)?.name || '-',
+        branchId: ph.branch_id || null,
         variant: ph.product_variants ? `${ph.product_variants.variant_name}: ${ph.product_variants.variant_value}` : '-',
         quantity: ph.quantity,
+        unitPrice: ph.unit_price || 0,
+        totalCost: ph.total_cost || 0,
       }))
       .sort((a, b) => b.date.localeCompare(a.date));
   }, [purchaseHistory]);
 
+  // Branch-filtered view of purchaseRows — drives the table, the totals
+  // row below it, and the Print/Export buttons for Purchase History.
+  const filteredPurchaseRows = useMemo(() => {
+    if (purchaseBranchFilter === 'all') return purchaseRows;
+    return purchaseRows.filter(r => r.branchId === purchaseBranchFilter);
+  }, [purchaseRows, purchaseBranchFilter]);
+
+  // Branches actually present in this item's purchase history — shown in
+  // the filter dropdown so it only lists branches relevant to this item.
+  const purchaseBranchOptions = useMemo(() => {
+    const ids = new Set(purchaseRows.map(r => r.branchId).filter(Boolean) as string[]);
+    return branches.filter(b => ids.has(b.id));
+  }, [purchaseRows, branches]);
+
   // Totals for the currently open View sheet.
   // "Total Received" (top card) = Opening Stock + manual Restocks only.
-  const totalPurchased = useMemo(() => purchaseRows.reduce((s, r) => s + (r.quantity || 0), 0), [purchaseRows]);
   const totalRestocked = useMemo(() => restockReceipts.reduce((s, r) => s + (r.quantity || 0), 0), [restockReceipts]);
   const totalIssued = useMemo(() => issueHistory.reduce((s, ih) => s + (ih.quantity || 0), 0), [issueHistory]);
   // issueHistory has one row per line item (e.g. per variant) — a single issue
@@ -500,11 +523,17 @@ export default function ProductsPage() {
   // than being silently hidden by forcing the numbers to match.
   const totalIn = openingTotal + totalRestocked;
 
-  // Grand total Rs value shown as a footer row under the Purchase History
-  // table — sums purchase quantities valued at the product's selling price
-  // (purchases don't store a per-entry price, so selling_price is used as
-  // the common valuation).
-  const purchaseTotalValue = useMemo(() => totalPurchased * (viewing?.selling_price || 0), [totalPurchased, viewing]);
+  // Totals shown as a footer under the Purchase History table — these follow
+  // the Branch filter above, so picking a branch (e.g. Cadet College) shows
+  // just that branch's quantity + Rs total. Rs total uses each purchase's
+  // own recorded cost (unit_price × quantity, from the purchases table)
+  // rather than the item's current selling price, so it matches what was
+  // actually paid.
+  const purchaseQtyTotal = useMemo(() => filteredPurchaseRows.reduce((s, r) => s + (r.quantity || 0), 0), [filteredPurchaseRows]);
+  const purchaseTotalValue = useMemo(
+    () => filteredPurchaseRows.reduce((s, r) => s + (r.totalCost || r.quantity * r.unitPrice), 0),
+    [filteredPurchaseRows]
+  );
 
   // Print / Export handlers for the Purchase History table inside the View sheet.
   const handlePrintPurchaseHistory = () => {
@@ -512,7 +541,7 @@ export default function ProductsPage() {
     printTable(
       `Purchase History — ${viewing.name}`,
       ['Date', 'Supplier', 'Branch', 'Variant', 'Quantity'],
-      purchaseRows.map(r => [
+      filteredPurchaseRows.map(r => [
         new Date(r.date).toLocaleDateString(),
         r.supplier,
         r.branch,
@@ -524,13 +553,14 @@ export default function ProductsPage() {
 
   const handleExportPurchaseHistory = () => {
     if (!viewing) return;
-    if (purchaseRows.length === 0) { toast.error('No purchase records to export'); return; }
-    exportToCSV(purchaseRows.map(r => ({
+    if (filteredPurchaseRows.length === 0) { toast.error('No purchase records to export'); return; }
+    exportToCSV(filteredPurchaseRows.map(r => ({
       'Date': r.date,
       'Supplier': r.supplier,
       'Branch': r.branch,
       'Variant': r.variant,
       'Quantity': r.quantity,
+      'Total Cost': r.totalCost || r.quantity * r.unitPrice,
     })), `${viewing.name.replace(/\s+/g, '-')}-purchase-history`);
     toast.success('Exported to CSV');
   };
@@ -1098,25 +1128,36 @@ export default function ProductsPage() {
               {/* Where it came from — PURCHASES ONLY. Restocks are excluded
                   from this table; they only affect the "Total Received" card above. */}
               <div className="bg-white dark:bg-card border border-gray-200 dark:border-border rounded-xl shadow-sm overflow-hidden">
-                <div className="flex items-center justify-between px-4 py-3 border-b bg-green-50 dark:bg-green-950/30">
+                <div className="flex items-center justify-between px-4 py-3 border-b bg-green-50 dark:bg-green-950/30 flex-wrap gap-2">
                   <div className="flex items-center gap-2">
                     <TrendingUp className="w-4 h-4 text-green-600" />
                     <p className="text-sm font-semibold">Purchase History</p>
-                    {purchaseRows.length > 0 && <Badge variant="secondary" className="text-xs">{purchaseRows.length}</Badge>}
+                    {filteredPurchaseRows.length > 0 && <Badge variant="secondary" className="text-xs">{filteredPurchaseRows.length}</Badge>}
                   </div>
-                  <div className="flex gap-1.5">
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handlePrintPurchaseHistory} disabled={purchaseRows.length === 0}>
+                  <div className="flex items-center gap-1.5 flex-wrap">
+                    {/* Branch filter — lets you narrow this item's purchase
+                        history down to one branch, e.g. Cadet College only. */}
+                    <Select value={purchaseBranchFilter} onValueChange={setPurchaseBranchFilter}>
+                      <SelectTrigger className="h-7 text-xs w-[150px]"><SelectValue placeholder="All Branches" /></SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">All Branches</SelectItem>
+                        {purchaseBranchOptions.map(b => <SelectItem key={b.id} value={b.id}>{b.name}</SelectItem>)}
+                      </SelectContent>
+                    </Select>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handlePrintPurchaseHistory} disabled={filteredPurchaseRows.length === 0}>
                       <Printer className="w-3.5 h-3.5 mr-1" /> Print
                     </Button>
-                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExportPurchaseHistory} disabled={purchaseRows.length === 0}>
+                    <Button size="sm" variant="outline" className="h-7 text-xs" onClick={handleExportPurchaseHistory} disabled={filteredPurchaseRows.length === 0}>
                       <Download className="w-3.5 h-3.5 mr-1" /> Excel
                     </Button>
                   </div>
                 </div>
                 {historyLoading ? (
                   <p className="text-xs text-muted-foreground p-4">Loading...</p>
-                ) : purchaseRows.length === 0 ? (
-                  <p className="text-xs text-muted-foreground p-4">No purchase records for this item.</p>
+                ) : filteredPurchaseRows.length === 0 ? (
+                  <p className="text-xs text-muted-foreground p-4">
+                    {purchaseRows.length === 0 ? 'No purchase records for this item.' : 'No purchase records for the selected branch.'}
+                  </p>
                 ) : (
                   <div className="max-h-64 overflow-y-auto">
                     <Table>
@@ -1130,7 +1171,7 @@ export default function ProductsPage() {
                         </TableRow>
                       </TableHeader>
                       <TableBody>
-                        {purchaseRows.map(r => (
+                        {filteredPurchaseRows.map(r => (
                           <TableRow key={r.id}>
                             <TableCell className="text-sm">{new Date(r.date).toLocaleDateString()}</TableCell>
                             <TableCell className="text-sm">{r.supplier}</TableCell>
@@ -1139,7 +1180,15 @@ export default function ProductsPage() {
                             <TableCell className="text-right font-semibold text-green-600">+{r.quantity}</TableCell>
                           </TableRow>
                         ))}
-                        {/* Grand total Rs row — purchase quantity × selling price */}
+                        {/* Grand totals row — Quantity total + Rs total, both
+                            following the Branch filter above. */}
+                        <TableRow className="bg-green-50/60 dark:bg-green-950/20">
+                          <TableCell colSpan={3} className="text-sm font-semibold text-right">Total</TableCell>
+                          <TableCell className="text-xs text-muted-foreground text-right">Qty</TableCell>
+                          <TableCell className="text-right font-bold text-green-700 dark:text-green-400">
+                            {purchaseQtyTotal.toLocaleString()}
+                          </TableCell>
+                        </TableRow>
                         <TableRow className="bg-green-50/60 dark:bg-green-950/20">
                           <TableCell colSpan={4} className="text-sm font-semibold text-right">Total Value</TableCell>
                           <TableCell className="text-right font-bold text-green-700 dark:text-green-400">
